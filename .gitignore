@@ -1,0 +1,44 @@
+# Gradle and compiled output
+/.gradle/
+/build/
+/bin/
+/out/
+*.class
+
+# IDE metadata
+/.idea/
+/.settings/
+/.metadata/
+/.classpath
+/.project
+*.iml
+*.ipr
+*.iws
+*.launch
+
+# Generated IDE projects and Minecraft run directories
+/eclipse/
+/run/
+/run-data/
+
+# Logs, crash reports, and JVM diagnostics
+/logs/
+/crash-reports/
+*.log
+*.log.gz
+hs_err_pid*
+replay_pid*
+
+# Local-only files and bundled development dependencies
+/libs/
+local.properties
+.env
+.env.*
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Files from the Forge MDK
+forge*changelog.txt

@@ -1,0 +1,13 @@
+{
+  "effect.ascend_ailments.soul_rot": "Soul Rot",
+  "effect.ascend_ailments.bleed": "Bleed",
+  "effect.ascend_ailments.fracture": "Fracture",
+  "effect.ascend_ailments.fear": "Fear",
+  "effect.ascend_ailments.charm": "Charm",
+  "effect.ascend_ailments.taunt": "Taunt",
+  "effect.ascend_ailments.overcharm": "Overcharm",
+  "effect.ascend_ailments.winded": "Winded",
+  "gui.ascend_ailments.hemorrhage": "Hemorrhage",
+  "death.attack.bleed": "%1$s bled out",
+  "death.attack.bleed.player": "%1$s bled out while fighting %2$s"
+}
