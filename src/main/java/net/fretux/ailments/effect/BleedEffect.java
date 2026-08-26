@@ -24,7 +24,8 @@ public final class BleedEffect extends MobEffect {
                 : amplifier == 1 ? AilmentsConfig.value(AilmentsConfig.BLEED_DAMAGE_1)
                 : AilmentsConfig.value(AilmentsConfig.BLEED_DAMAGE_2);
         float potency = EffectSourceUtil.getPotency(entity, EffectSourceUtil.BLEED);
-        boolean damaged = entity.hurt(ModDamageSources.bleed(entity.level()), (float) (base * potency));
+        LivingEntity source = EffectSourceUtil.getSourceInLevel(entity, EffectSourceUtil.BLEED);
+        boolean damaged = entity.hurt(ModDamageSources.bleed(entity.level(), source), (float) (base * potency));
         if (damaged) HemorrhageTracker.recordBleedDamage(entity, amplifier, potency);
     }
 }

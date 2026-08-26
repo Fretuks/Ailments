@@ -6,17 +6,23 @@ import net.fretux.ailments.registry.ModEffects;
 import net.minecraft.commands.arguments.EntityAnchorArgument;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.world.effect.MobEffectInstance;
-import net.minecraft.world.effect.MobEffects;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.food.FoodData;
 import net.minecraft.world.phys.Vec3;
+
+import java.util.UUID;
 
 public final class ControlEffectHelper {
     private static final String FEAR_DISTANCE = "ascend_ailments.fear.last_distance_sqr";
     private static final String SOUL_FOOD = "ascend_ailments.soul_rot.last_food";
     private static final String SOUL_SATURATION = "ascend_ailments.soul_rot.last_saturation";
+    private static final UUID FEAR_MOVEMENT_UUID = UUID.fromString("8158dc2a-8de9-49a2-b086-bd99ade47661");
+    private static final UUID FEAR_ATTACK_UUID = UUID.fromString("4468e408-78e8-49f6-a7bc-9ae9028a0f48");
 
     public static void handleLivingTick(LivingEntity entity) {
         if (entity.level().isClientSide) return;
@@ -26,6 +32,7 @@ public final class ControlEffectHelper {
         else {
             EffectSourceUtil.clear(entity, EffectSourceUtil.FEAR);
             entity.getPersistentData().remove(FEAR_DISTANCE);
+            clearFearPlayerPenalties(entity);
         }
         if (entity.hasEffect(ModEffects.TAUNT.get())) tickTaunt(entity);
         else EffectSourceUtil.clear(entity, EffectSourceUtil.TAUNT);
@@ -36,14 +43,20 @@ public final class ControlEffectHelper {
     }
 
     private static void tickFear(LivingEntity entity) {
-        LivingEntity source = validControlSource(entity, EffectSourceUtil.FEAR);
-        if (source == null) {
-            entity.removeEffect(ModEffects.FEAR.get());
-            EffectSourceUtil.clear(entity, EffectSourceUtil.FEAR);
+        if (EffectSourceUtil.getSourceUuid(entity, EffectSourceUtil.FEAR) == null) {
+            removeControlEffect(entity, ModEffects.FEAR.get(), EffectSourceUtil.FEAR);
             entity.getPersistentData().remove(FEAR_DISTANCE);
             return;
         }
+        LivingEntity source = validControlSource(entity, EffectSourceUtil.FEAR);
+        if (source == null) {
+            if (entity instanceof Mob mob) mob.getNavigation().stop();
+            entity.getPersistentData().remove(FEAR_DISTANCE);
+            clearFearPlayerPenalties(entity);
+            return;
+        }
         if (MentalControlUtil.isMentalControlResistant(entity)) {
+            clearFearPlayerPenalties(entity);
             MobEffectInstance winded = entity.getEffect(ModEffects.WINDED.get());
             if (winded == null || winded.getDuration() < 10)
                 entity.addEffect(new MobEffectInstance(ModEffects.WINDED.get(), 25, 0, false, false, false));
@@ -86,17 +99,17 @@ public final class ControlEffectHelper {
             }
         }
         data.putDouble(FEAR_DISTANCE, distance);
-        if (distance <= 36.0) {
-            player.addEffect(new MobEffectInstance(MobEffects.MOVEMENT_SLOWDOWN, 20, 3, false, false, false));
-            player.addEffect(new MobEffectInstance(MobEffects.WEAKNESS, 20, 0, false, false, false));
-        }
+        setFearPlayerPenalties(player, distance <= 36.0);
     }
 
     private static void tickTaunt(LivingEntity entity) {
+        if (EffectSourceUtil.getSourceUuid(entity, EffectSourceUtil.TAUNT) == null) {
+            removeControlEffect(entity, ModEffects.TAUNT.get(), EffectSourceUtil.TAUNT);
+            return;
+        }
         LivingEntity source = validControlSource(entity, EffectSourceUtil.TAUNT);
         if (source == null) {
-            entity.removeEffect(ModEffects.TAUNT.get());
-            EffectSourceUtil.clear(entity, EffectSourceUtil.TAUNT);
+            if (entity instanceof Mob mob && mob.getTarget() != null) mob.setTarget(null);
             return;
         }
         if (MentalControlUtil.isMentalControlResistant(entity)) return;
@@ -106,10 +119,8 @@ public final class ControlEffectHelper {
     }
 
     private static void validateCharm(LivingEntity entity) {
-        if (validControlSource(entity, EffectSourceUtil.CHARM) == null) {
-            entity.removeEffect(ModEffects.CHARM.get());
-            EffectSourceUtil.clear(entity, EffectSourceUtil.CHARM);
-        }
+        if (EffectSourceUtil.getSourceUuid(entity, EffectSourceUtil.CHARM) == null)
+            removeControlEffect(entity, ModEffects.CHARM.get(), EffectSourceUtil.CHARM);
     }
 
     public static boolean isOwnCharmSource(LivingEntity charmed, LivingEntity possibleSource) {
@@ -122,8 +133,37 @@ public final class ControlEffectHelper {
     }
 
     private static LivingEntity validControlSource(LivingEntity target, String key) {
-        LivingEntity source = EffectSourceUtil.getSource(target, key);
-        return source != null && source.isAlive() && source.level() == target.level() ? source : null;
+        LivingEntity source = EffectSourceUtil.getSourceInLevel(target, key);
+        return source != null && source.isAlive() ? source : null;
+    }
+
+    private static void setFearPlayerPenalties(Player player, boolean active) {
+        setTransientModifier(player.getAttribute(Attributes.MOVEMENT_SPEED), FEAR_MOVEMENT_UUID,
+                "Ascend Ailments fear movement", -0.60, AttributeModifier.Operation.MULTIPLY_TOTAL, active);
+        setTransientModifier(player.getAttribute(Attributes.ATTACK_DAMAGE), FEAR_ATTACK_UUID,
+                "Ascend Ailments fear weakness", -4.0, AttributeModifier.Operation.ADDITION, active);
+    }
+
+    private static void setTransientModifier(AttributeInstance attribute, UUID id, String name, double amount,
+                                             AttributeModifier.Operation operation, boolean active) {
+        if (attribute == null) return;
+        AttributeModifier existing = attribute.getModifier(id);
+        if (!active) {
+            if (existing != null) attribute.removeModifier(id);
+        } else if (existing == null) {
+            attribute.addTransientModifier(new AttributeModifier(id, name, amount, operation));
+        }
+    }
+
+    private static void clearFearPlayerPenalties(LivingEntity entity) {
+        if (entity instanceof Player player) setFearPlayerPenalties(player, false);
+    }
+
+    private static void removeControlEffect(LivingEntity entity, net.minecraft.world.effect.MobEffect effect,
+                                            String key) {
+        entity.removeEffect(effect);
+        EffectSourceUtil.clear(entity, key);
+        if (key.equals(EffectSourceUtil.FEAR)) clearFearPlayerPenalties(entity);
     }
 
     private static void handleSoulRotFood(LivingEntity entity) {

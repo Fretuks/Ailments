@@ -25,8 +25,9 @@ public final class AscendAilments {
         ModEffects.register(modBus);
         AilmentNetwork.register();
         modBus.addListener(this::commonSetup);
-        context.registerConfig(ModConfig.Type.COMMON, AilmentsConfig.SPEC,
-                "ascend-ailments-common.toml");
+        // Gameplay settings belong to the server and are synchronized to multiplayer clients by Forge.
+        context.registerConfig(ModConfig.Type.SERVER, AilmentsConfig.SPEC,
+                "ascend-ailments-server.toml");
         MinecraftForge.EVENT_BUS.addListener(this::registerCommands);
     }
 

@@ -92,7 +92,7 @@ Item tags:
 Direct melee hits with items in these tags apply their corresponding ailment. Soul Rot, Bleed, and Fracture use
 their configured stack/duration behavior; the other tags use `taggedWeaponEffectDurationTicks`. Bleed also applies to non-vanilla item
 registry paths containing a configured katana-family keyword. Automatic application, proc chance, matching keywords,
-and the PvP proc cooldown are configurable under `integration` in `ascend-ailments-common.toml`. PvP cooldowns are
+and the PvP proc cooldown are configurable under `integration` in `ascend-ailments-server.toml`. PvP cooldowns are
 tracked per attacking player and ailment; their configured minimum is 60 ticks (3 seconds).
 
 ## Admin commands

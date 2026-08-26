@@ -25,7 +25,7 @@ public final class AscendCompat {
         try {
             resolve();
             return statsCapability != null && getAttributeLevel != null;
-        } catch (ReflectiveOperationException | LinkageError ignored) {
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
             return false;
         }
     }
@@ -39,20 +39,27 @@ public final class AscendCompat {
             Optional<?> stats = lazy.resolve();
             if (stats.isEmpty()) return 0;
             return Math.max(0, ((Number) getAttributeLevel.invoke(stats.get(), "arcane")).intValue());
-        } catch (ReflectiveOperationException | LinkageError ignored) {
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
             return 0;
         }
     }
 
     private static synchronized void resolve() throws ReflectiveOperationException {
         if (resolved) return;
-        resolved = true;
         Class<?> provider = Class.forName(PROVIDER, false, AscendCompat.class.getClassLoader());
         Field capabilityField = provider.getField("PLAYER_STATS");
-        statsCapability = (Capability<?>) capabilityField.get(null);
+        Capability<?> resolvedCapability = (Capability<?>) capabilityField.get(null);
         Class<?> statsClass = Class.forName("net.fretux.ascend.player.PlayerStats", false,
                 AscendCompat.class.getClassLoader());
-        getAttributeLevel = statsClass.getMethod("getAttributeLevel", String.class);
+        Method resolvedGetter = statsClass.getMethod("getAttributeLevel", String.class);
+        Class<?> returnType = resolvedGetter.getReturnType();
+        boolean numericPrimitive = returnType == byte.class || returnType == short.class || returnType == int.class
+                || returnType == long.class || returnType == float.class || returnType == double.class;
+        if (!Number.class.isAssignableFrom(returnType) && !numericPrimitive)
+            throw new NoSuchMethodException("getAttributeLevel(String) does not return a number");
+        statsCapability = resolvedCapability;
+        getAttributeLevel = resolvedGetter;
+        resolved = true;
     }
     private AscendCompat() {}
 }

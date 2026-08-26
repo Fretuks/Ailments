@@ -34,7 +34,8 @@ public final class HemorrhageTracker {
         if (target.isAlive()) {
             float damage = (float) (target.getMaxHealth()
                     * AilmentsConfig.value(AilmentsConfig.HEMORRHAGE_MAX_HEALTH_DAMAGE));
-            if (damage > 0) target.hurt(ModDamageSources.bleed(target.level()), damage);
+            LivingEntity source = EffectSourceUtil.getSourceInLevel(target, EffectSourceUtil.BLEED);
+            if (damage > 0) target.hurt(ModDamageSources.bleed(target.level(), source), damage);
         }
         return true;
     }

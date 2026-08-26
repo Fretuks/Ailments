@@ -1,6 +1,7 @@
 package net.fretux.ailments.api;
 
 import net.fretux.ailments.config.AilmentsConfig;
+import net.fretux.ailments.compat.AscendCompat;
 import net.fretux.ailments.registry.ModEffects;
 import net.fretux.ailments.util.EffectSourceUtil;
 import net.fretux.ailments.util.MentalControlUtil;
@@ -117,8 +118,7 @@ public final class AilmentApi {
         int base = AilmentsConfig.value(AilmentsConfig.SOUL_ROT_DURATION);
         if (extendWithStacks) base = safeAdd(base, amplifier * 20);
         int duration = AilmentScaling.scaleDuration(base, source);
-        target.removeEffect(effect);
-        boolean applied = target.addEffect(instance(effect, duration, amplifier, true));
+        boolean applied = addStackingEffect(target, source, effect, duration, amplifier, true);
         if (applied) {
             EffectSourceUtil.setSource(target, EffectSourceUtil.SOUL_ROT, source);
             EffectSourceUtil.setPotency(target, EffectSourceUtil.SOUL_ROT,
@@ -148,8 +148,7 @@ public final class AilmentApi {
                 : amplifier == 1 ? AilmentsConfig.value(AilmentsConfig.BLEED_DURATION_1)
                 : AilmentsConfig.value(AilmentsConfig.BLEED_DURATION_2);
         int duration = AilmentScaling.scaleDuration(base, source);
-        target.removeEffect(effect);
-        boolean applied = target.addEffect(instance(effect, duration, amplifier, true));
+        boolean applied = addStackingEffect(target, source, effect, duration, amplifier, true);
         if (applied) {
             EffectSourceUtil.setSource(target, EffectSourceUtil.BLEED, source);
             EffectSourceUtil.setPotency(target, EffectSourceUtil.BLEED,
@@ -191,8 +190,7 @@ public final class AilmentApi {
         int stackedAmplifier = current == null ? 0 : Math.min(2, current.getAmplifier() + 1);
         int appliedAmplifier = Math.min(2, Math.max(stackedAmplifier, amplifier));
         int duration = AilmentScaling.scaleDuration(requestedTicks, source);
-        target.removeEffect(effect);
-        boolean applied = target.addEffect(instance(effect, duration, appliedAmplifier, true));
+        boolean applied = addStackingEffect(target, source, effect, duration, appliedAmplifier, true);
         if (applied) EffectSourceUtil.setSource(target, EffectSourceUtil.FRACTURE, source);
         return finishApplication(applied, target, source, AilmentType.FRACTURE);
     }
@@ -233,12 +231,8 @@ public final class AilmentApi {
     public static boolean applyOvercharm(LivingEntity target, @Nullable LivingEntity source, int requestedTicks) {
         if (!serverValid(target) || !pvpProcReady(target, source, AilmentType.OVERCHARM)) return false;
         int duration = AilmentScaling.scaleDuration(requestedTicks, source);
-        boolean result = target.addEffect(instance(ModEffects.OVERCHARM.get(), duration, 0, true));
+        boolean result = addSourcedEffect(target, source, ModEffects.OVERCHARM.get(), duration, 0, true);
         if (result) {
-            // Ascend itself scales beneficial effects received by players. Restore the source-scaled duration so
-            // this API remains the single authority and cannot be scaled twice when both mods are installed.
-            MobEffectInstance active = target.getEffect(ModEffects.OVERCHARM.get());
-            if (active != null) active.mapDuration(ignored -> duration);
             EffectSourceUtil.setSource(target, EffectSourceUtil.OVERCHARM, source);
         }
         return finishApplication(result, target, source, AilmentType.OVERCHARM);
@@ -247,7 +241,7 @@ public final class AilmentApi {
     public static boolean applyWinded(LivingEntity target, @Nullable LivingEntity source, int requestedTicks) {
         if (!serverValid(target) || !pvpProcReady(target, source, AilmentType.WINDED)) return false;
         int duration = AilmentScaling.scaleDuration(requestedTicks, source);
-        return finishApplication(target.addEffect(instance(ModEffects.WINDED.get(), duration, 0, true)),
+        return finishApplication(addSourcedEffect(target, source, ModEffects.WINDED.get(), duration, 0, true),
                 target, source, AilmentType.WINDED);
     }
 
@@ -311,15 +305,14 @@ public final class AilmentApi {
 
     private static boolean applySourced(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
                                          String key, int duration, int amplifier) {
-        boolean applied = target.addEffect(instance(effect, Math.max(1, duration), amplifier, true));
+        boolean applied = addSourcedEffect(target, source, effect, Math.max(1, duration), amplifier, true);
         if (applied) EffectSourceUtil.setSource(target, key, source);
         return applied;
     }
     private static boolean applyDot(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
                                     String key, int requestedTicks, int amplifier, AilmentType type) {
         int duration = AilmentScaling.scaleDuration(requestedTicks, source);
-        target.removeEffect(effect);
-        boolean applied = target.addEffect(instance(effect, duration, amplifier, true));
+        boolean applied = addSourcedEffect(target, source, effect, duration, amplifier, true);
         if (applied) {
             EffectSourceUtil.setSource(target, key, source);
             EffectSourceUtil.setPotency(target, key, AilmentScaling.getPotencyMultiplier(source, type));
@@ -328,6 +321,32 @@ public final class AilmentApi {
     }
     private static MobEffectInstance instance(MobEffect effect, int duration, int amplifier, boolean icon) {
         return new MobEffectInstance(effect, duration, amplifier, false, false, icon);
+    }
+    private static boolean addSourcedEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
+                                            int duration, int amplifier, boolean icon) {
+        boolean applied = target.addEffect(instance(effect, duration, amplifier, icon), source);
+        if (applied && AscendCompat.isAscendLoaded()) {
+            // Ascend observes the standard Forge source and scales duration during addEffect. Ailments already
+            // applied its source curve, so restore the requested duration to prevent double scaling.
+            MobEffectInstance active = target.getEffect(effect);
+            if (active != null && active.getAmplifier() == amplifier) active.mapDuration(ignored -> duration);
+        }
+        return applied;
+    }
+    private static boolean addStackingEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
+                                             int duration, int amplifier, boolean icon) {
+        MobEffectInstance previous = target.getEffect(effect);
+        if (previous == null || previous.getAmplifier() >= amplifier)
+            return addSourcedEffect(target, source, effect, duration, amplifier, icon);
+
+        // Vanilla preserves a lower-amplifier effect as a hidden fallback when upgrading. These ailments refresh
+        // to one authoritative stack state, so suppress that fallback without emitting a remove/add lifecycle.
+        int previousDuration = previous.getDuration();
+        previous.mapDuration(ignored -> 0);
+        boolean applied = addSourcedEffect(target, source, effect, duration, amplifier, icon);
+        if (!applied && target.getEffect(effect) == previous)
+            previous.mapDuration(ignored -> previousDuration);
+        return applied;
     }
     private static boolean serverValid(LivingEntity target) {
         return target != null && !target.level().isClientSide && target.isAlive()
@@ -347,7 +366,10 @@ public final class AilmentApi {
         return (int) Math.min(Integer.MAX_VALUE, (long) a + b);
     }
     private static boolean pvpProcReady(LivingEntity target, @Nullable LivingEntity source, AilmentType type) {
-        if (!(source instanceof Player) || !(target instanceof Player) || source == target) return true;
+        if (source != null && source.level() != target.level()) return false;
+        if (!(source instanceof Player sourcePlayer) || !(target instanceof Player targetPlayer) || source == target)
+            return true;
+        if (!sourcePlayer.canHarmPlayer(targetPlayer)) return false;
         String key = pvpCooldownKey(type);
         long now = source.level().getGameTime();
         return !source.getPersistentData().contains(key)

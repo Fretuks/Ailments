@@ -34,11 +34,24 @@ public final class EffectSourceUtil {
         UUID id = getSourceUuid(target, ailment);
         if (id == null || !(target.level() instanceof ServerLevel level)) return null;
         MinecraftServer server = level.getServer();
+        Entity player = server.getPlayerList().getPlayer(id);
+        if (player instanceof LivingEntity living) return living;
+        Entity local = level.getEntity(id);
+        if (local instanceof LivingEntity living) return living;
         for (ServerLevel candidate : server.getAllLevels()) {
+            if (candidate == level) continue;
             Entity entity = candidate.getEntity(id);
             if (entity instanceof LivingEntity living) return living;
         }
         return null;
+    }
+
+    /** Resolves a loaded source only in the target's current level without scanning every server dimension. */
+    @Nullable public static LivingEntity getSourceInLevel(LivingEntity target, String ailment) {
+        UUID id = getSourceUuid(target, ailment);
+        if (id == null || !(target.level() instanceof ServerLevel level)) return null;
+        Entity entity = level.getEntity(id);
+        return entity instanceof LivingEntity living ? living : null;
     }
 
     public static void setPotency(LivingEntity target, String ailment, double potency) {

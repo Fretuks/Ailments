@@ -3,6 +3,7 @@ package net.fretux.ailments.event;
 import net.fretux.ailments.AscendAilments;
 import net.fretux.ailments.api.AilmentApi;
 import net.fretux.ailments.config.AilmentsConfig;
+import net.fretux.ailments.damage.ModDamageSources;
 import net.fretux.ailments.registry.ModEffects;
 import net.fretux.ailments.util.ControlEffectHelper;
 import net.fretux.ailments.util.EffectSourceUtil;
@@ -20,10 +21,12 @@ import net.minecraftforge.event.entity.living.LivingAttackEvent;
 import net.minecraftforge.event.entity.living.LivingChangeTargetEvent;
 import net.minecraftforge.event.entity.living.LivingEvent;
 import net.minecraftforge.event.entity.living.LivingDeathEvent;
+import net.minecraftforge.event.entity.living.LivingDamageEvent;
 import net.minecraftforge.event.entity.living.LivingHealEvent;
 import net.minecraftforge.event.entity.living.LivingHurtEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.registries.ForgeRegistries;
 
@@ -54,12 +57,14 @@ public final class AilmentEvents {
 
     @SubscribeEvent
     public static void onHeal(LivingHealEvent event) {
-        if (!event.isCanceled() && event.getEntity().hasEffect(ModEffects.SOUL_ROT.get()))
+        if (!event.getEntity().level().isClientSide && !event.isCanceled()
+                && event.getEntity().hasEffect(ModEffects.SOUL_ROT.get()))
             event.setAmount((float) (event.getAmount() * AilmentsConfig.value(AilmentsConfig.SOUL_ROT_HEALING)));
     }
 
     @SubscribeEvent
     public static void onAttack(LivingAttackEvent event) {
+        if (event.getEntity().level().isClientSide) return;
         Entity attacker = event.getSource().getEntity();
         if (attacker instanceof LivingEntity living && !(living instanceof Player)
                 && living.hasEffect(ModEffects.CHARM.get())
@@ -68,6 +73,7 @@ public final class AilmentEvents {
 
     @SubscribeEvent
     public static void onChangeTarget(LivingChangeTargetEvent event) {
+        if (event.getEntity().level().isClientSide) return;
         if (!(event.getEntity() instanceof Mob mob)) return;
         LivingEntity taunter = mob.hasEffect(ModEffects.TAUNT.get())
                 && !MentalControlUtil.isMentalControlResistant(mob)
@@ -82,11 +88,12 @@ public final class AilmentEvents {
 
     @SubscribeEvent
     public static void onHurt(LivingHurtEvent event) {
-        if (event.isCanceled()) return;
+        if (event.getEntity().level().isClientSide || event.isCanceled()) return;
         LivingEntity victim = event.getEntity();
         DamageSource damageSource = event.getSource();
         Entity causing = damageSource.getEntity();
-        LivingEntity attacker = causing instanceof LivingEntity living ? living : null;
+        LivingEntity attacker = !damageSource.is(ModDamageSources.BLEED) && causing instanceof LivingEntity living
+                ? living : null;
         float amount = event.getAmount();
 
         // 1. Victim vulnerability.
@@ -119,14 +126,25 @@ public final class AilmentEvents {
             boolean directPlayerMelee = attacker instanceof Player && damageSource.getDirectEntity() == attacker;
             if (alreadyCharmedByAttacker && directPlayerMelee)
                 amount *= (float) AilmentsConfig.value(AilmentsConfig.OVERCHARM_DAMAGE_BONUS);
+        }
+        event.setAmount(amount);
+    }
+
+    /** Applies hit-triggered ailments only after armor, absorption, and earlier cancellation hooks are resolved. */
+    @SubscribeEvent(priority = EventPriority.LOWEST)
+    public static void onDamage(LivingDamageEvent event) {
+        if (event.getEntity().level().isClientSide || event.isCanceled() || event.getAmount() <= 0) return;
+        LivingEntity victim = event.getEntity();
+        DamageSource damageSource = event.getSource();
+        if (damageSource.is(ModDamageSources.BLEED)) return;
+        Entity causing = damageSource.getEntity();
+        if (!(causing instanceof LivingEntity attacker) || attacker == victim) return;
+
+        if (attacker.hasEffect(ModEffects.OVERCHARM.get()))
             AilmentApi.applyCharm(victim, attacker,
                     AilmentsConfig.value(AilmentsConfig.OVERCHARM_CHARM_DURATION));
-        }
-
-        if (attacker != null && attacker != victim && amount > 0
-                && damageSource.getDirectEntity() == attacker)
+        if (damageSource.getDirectEntity() == attacker)
             applyTaggedWeaponAilments(attacker.getMainHandItem(), victim, attacker);
-        event.setAmount(amount);
     }
 
     private static void applyTaggedWeaponAilments(ItemStack stack, LivingEntity victim, LivingEntity attacker) {
