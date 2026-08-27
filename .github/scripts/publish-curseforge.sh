@@ -50,7 +50,7 @@ jq -n \
       projects: [
         {
           slug: "ascend",
-          projectID: "1383429",
+          projectID: 1383429,
           type: "optionalDependency"
         }
       ]
