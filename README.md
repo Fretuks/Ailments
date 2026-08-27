@@ -3,6 +3,9 @@
 Forge 1.20.1 library mod providing Soul Rot, Bleed, Fracture, Fear, Charm, Taunt, Overcharm, and Winded.
 The mod ID is `ascend_ailments`; Ascend is optional.
 
+Release builds are tested and published through GitHub Actions. The required one-time CurseForge setup and release
+process are documented in [docs/RELEASING.md](docs/RELEASING.md).
+
 ## Public API
 
 Normal callers should use `net.fretux.ailments.api.AilmentApi`, for example:
