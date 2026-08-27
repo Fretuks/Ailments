@@ -6,6 +6,7 @@ import net.fretux.ailments.compat.AscendCompat;
 import net.fretux.ailments.config.AilmentsConfig;
 import net.fretux.ailments.registry.ModEffects;
 import net.fretux.ailments.registry.ModItems;
+import net.fretux.ailments.registry.ModPotions;
 import net.fretux.ailments.network.AilmentNetwork;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.RegisterCommandsEvent;
@@ -25,6 +26,7 @@ public final class AscendAilments {
         IEventBus modBus = context.getModEventBus();
         ModEffects.register(modBus);
         ModItems.register(modBus);
+        ModPotions.register(modBus);
         AilmentNetwork.register();
         modBus.addListener(this::commonSetup);
         // Gameplay settings belong to the server and are synchronized to multiplayer clients by Forge.
@@ -35,6 +37,7 @@ public final class AscendAilments {
 
     private void commonSetup(FMLCommonSetupEvent event) {
         event.enqueueWork(() -> {
+            ModPotions.registerBrewingRecipes();
             if (AscendCompat.isAscendLoaded())
                 LOGGER.info("Ascend Arcane integration API available: {}", AscendCompat.validateIntegration());
         });

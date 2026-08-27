@@ -145,3 +145,24 @@ The Tools & Utilities creative tab contains one glowing debug stick for each of 
 direct hit applies the named effect through the normal source-aware API. Soul Rot, Bleed, and Fracture add their
 configured stacks; the other effects use `taggedWeaponEffectDurationTicks`. The sticks have no recipes and only apply
 effects when wielded by a player in Creative Mode, including on multiplayer and dedicated servers.
+
+## Potions
+
+Each ailment has a drinkable potion brewed from an Awkward Potion. Add Gunpowder for its splash variant (and Dragon's
+Breath afterward for the standard lingering variant).
+
+| Ailment | Awkward Potion ingredient |
+| --- | --- |
+| Soul Rot | Soul Sand |
+| Bleed | Rotten Flesh |
+| Fracture | Bone |
+| Fear | Fermented Spider Eye |
+| Charm | Honey Bottle |
+| Taunt | Fire Charge |
+| Overcharm | Golden Apple |
+| Winded | Feather |
+
+Fear, Charm, and Taunt retain a source. A drinkable bottle targets its drinker with the player who took the finished
+bottle from the brewing stand as its brewer; drinking your own control potion has no effect. Splash potions use the
+thrower as their source and likewise do not control the thrower. Drinkable control potions created without a recorded
+brewer do nothing safely.

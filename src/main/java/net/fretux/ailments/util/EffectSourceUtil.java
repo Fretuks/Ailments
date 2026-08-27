@@ -19,9 +19,13 @@ public final class EffectSourceUtil {
     public static final String OVERCHARM = "ascend_ailments.overcharm";
 
     public static void setSource(LivingEntity target, String ailment, @Nullable LivingEntity source) {
+        setSourceUuid(target, ailment, source == null ? null : source.getUUID());
+    }
+
+    public static void setSourceUuid(LivingEntity target, String ailment, @Nullable UUID sourceId) {
         CompoundTag data = target.getPersistentData();
-        if (source == null) data.remove(sourceKey(ailment));
-        else data.putUUID(sourceKey(ailment), source.getUUID());
+        if (sourceId == null) data.remove(sourceKey(ailment));
+        else data.putUUID(sourceKey(ailment), sourceId);
     }
 
     @Nullable public static UUID getSourceUuid(LivingEntity target, String ailment) {
