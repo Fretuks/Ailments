@@ -58,7 +58,8 @@ public final class AilmentEvents {
     @SubscribeEvent
     public static void onHeal(LivingHealEvent event) {
         if (!event.getEntity().level().isClientSide && !event.isCanceled()
-                && event.getEntity().hasEffect(ModEffects.SOUL_ROT.get()))
+                && event.getEntity().hasEffect(ModEffects.SOUL_ROT.get())
+                && AilmentApi.canSoulRot(event.getEntity()))
             event.setAmount((float) (event.getAmount() * AilmentsConfig.value(AilmentsConfig.SOUL_ROT_HEALING)));
     }
 
@@ -97,7 +98,7 @@ public final class AilmentEvents {
         float amount = event.getAmount();
 
         // 1. Victim vulnerability.
-        if (victim.hasEffect(ModEffects.SOUL_ROT.get()))
+        if (victim.hasEffect(ModEffects.SOUL_ROT.get()) && AilmentApi.canSoulRot(victim))
             amount *= (float) AilmentsConfig.value(AilmentsConfig.SOUL_ROT_DAMAGE_TAKEN);
 
         // 2. Charm victim and attacker rules.

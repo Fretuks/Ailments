@@ -8,6 +8,8 @@ import net.minecraft.world.entity.EntityType;
 
 public final class ModEntityTypeTags {
     public static final TagKey<EntityType<?>> BLEED_IMMUNE = tag("bleed_immune");
+    public static final TagKey<EntityType<?>> SOULLESS = tag("soulless");
+    public static final TagKey<EntityType<?>> STURDY = tag("sturdy");
     public static final TagKey<EntityType<?>> MENTAL_CONTROL_RESISTANT = tag("mental_control_resistant");
     public static final TagKey<EntityType<?>> MENTAL_CONTROL_IMMUNE = tag("mental_control_immune");
     private static TagKey<EntityType<?>> tag(String path) {

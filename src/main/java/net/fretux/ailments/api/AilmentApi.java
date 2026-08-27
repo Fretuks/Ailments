@@ -8,14 +8,17 @@ import net.fretux.ailments.util.MentalControlUtil;
 import net.fretux.ailments.util.ModEntityTypeTags;
 import net.fretux.ailments.util.HemorrhageTracker;
 import net.minecraft.world.effect.MobEffect;
+import net.minecraft.world.effect.MobEffectCategory;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.MobType;
 import net.minecraft.world.entity.monster.EnderMan;
 import net.minecraft.world.entity.player.Player;
+import net.minecraftforge.registries.ForgeRegistries;
 
 import javax.annotation.Nullable;
 import java.util.Objects;
+import java.util.UUID;
 
 /** Stable, source-aware entry point for applying and querying Ascend: Ailments effects. */
 public final class AilmentApi {
@@ -85,6 +88,97 @@ public final class AilmentApi {
         return applied;
     }
 
+    /**
+     * Applies an effect owned by another mod with standard Forge source propagation and persistent source tracking.
+     * The requested duration is used exactly and is not Arcane-scaled. Vanilla effect-merging rules apply.
+     */
+    public static boolean applyEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
+                                      int requestedTicks, int amplifier) {
+        return applyExternalEffect(target, source, effect, requestedTicks, amplifier, false);
+    }
+
+    /** Applies an amplifier-zero external effect with source propagation and persistent source tracking. */
+    public static boolean applyEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
+                                      int requestedTicks) {
+        return applyEffect(target, source, effect, requestedTicks, 0);
+    }
+
+    /**
+     * Applies an external effect and scales its requested duration once using the optional Ascend Arcane curve.
+     * Use this overload only when the owning mod wants Ailments to be the duration-scaling authority.
+     */
+    public static boolean applyScaledEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
+                                            int requestedTicks, int amplifier) {
+        return applyExternalEffect(target, source, effect, requestedTicks, amplifier, true);
+    }
+
+    /** Applies an amplifier-zero external effect with one-time Arcane duration scaling. */
+    public static boolean applyScaledEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
+                                            int requestedTicks) {
+        return applyScaledEffect(target, source, effect, requestedTicks, 0);
+    }
+
+    /** Adds one amplifier stack to an external effect, refreshes its duration, and tracks the latest source. */
+    public static boolean applyStackingEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
+                                              int requestedTicks, int maximumStacks) {
+        return applyStackingEffect(target, source, effect, requestedTicks, maximumStacks, false, false);
+    }
+
+    /**
+     * Adds one stack to an external effect with configurable duration behavior and optional Arcane scaling.
+     * {@code maximumStacks} uses a human-facing one-based count; the applied amplifier is capped at one less.
+     * When {@code extendDuration} is true, the scaled requested duration is added to the remaining duration.
+     */
+    public static boolean applyStackingEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
+                                              int requestedTicks, int maximumStacks, boolean extendDuration,
+                                              boolean scaleDurationWithArcane) {
+        Objects.requireNonNull(effect, "effect");
+        if (!externalApplicationValid(target, source, effect, requestedTicks, 0)
+                || maximumStacks < 1 || maximumStacks > 256) return false;
+        MobEffectInstance current = target.getEffect(effect);
+        if (current != null && current.isInfiniteDuration()) return false;
+        int amplifier = current == null ? 0 : current.getAmplifier() >= maximumStacks - 1
+                ? maximumStacks - 1 : current.getAmplifier() + 1;
+        int duration = scaleDurationWithArcane ? AilmentScaling.scaleDuration(requestedTicks, source) : requestedTicks;
+        if (extendDuration && current != null) duration = safeAdd(current.getDuration(), duration);
+        boolean applied = addStackingEffect(target, source, effect, duration, amplifier, false, true, true);
+        if (applied) trackExternalSource(target, source, effect);
+        return applied;
+    }
+
+    /** Returns the UUID of the latest successful source tracked for an active external effect. */
+    @Nullable public static UUID getEffectSourceUuid(LivingEntity target, MobEffect effect) {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(effect, "effect");
+        String key = externalSourceKey(effect);
+        if (key == null) return null;
+        if (!target.hasEffect(effect)) {
+            EffectSourceUtil.clear(target, key);
+            return null;
+        }
+        return EffectSourceUtil.getSourceUuid(target, key);
+    }
+
+    /** Returns the latest tracked source when it is currently loaded, or {@code null}. */
+    @Nullable public static LivingEntity getEffectSource(LivingEntity target, MobEffect effect) {
+        if (getEffectSourceUuid(target, effect) == null) return null;
+        return EffectSourceUtil.getSource(target, externalSourceKey(effect));
+    }
+
+    /** Resolves the latest tracked source only when it is loaded in the target's current level. */
+    @Nullable public static LivingEntity getEffectSourceInLevel(LivingEntity target, MobEffect effect) {
+        if (getEffectSourceUuid(target, effect) == null) return null;
+        return EffectSourceUtil.getSourceInLevel(target, externalSourceKey(effect));
+    }
+
+    /** Clears source metadata created by the generic external-effect API without removing the effect. */
+    public static void clearEffectSource(LivingEntity target, MobEffect effect) {
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(effect, "effect");
+        String key = externalSourceKey(effect);
+        if (key != null) EffectSourceUtil.clear(target, key);
+    }
+
     /** Returns the registered MobEffect represented by a stable public ailment identifier. */
     public static MobEffect getEffect(AilmentType type) {
         Objects.requireNonNull(type, "type");
@@ -108,7 +202,8 @@ public final class AilmentApi {
     /** Applies one Soul Rot stack; disabling extension always refreshes the configured base duration. */
     public static boolean applySoulRot(LivingEntity target, @Nullable LivingEntity source,
                                        boolean extendWithStacks) {
-        if (!serverValid(target) || !pvpProcReady(target, source, AilmentType.SOUL_ROT)) return false;
+        if (!serverValid(target) || !canSoulRot(target)
+                || !pvpProcReady(target, source, AilmentType.SOUL_ROT)) return false;
         MobEffect effect = ModEffects.SOUL_ROT.get();
         MobEffectInstance current = target.getEffect(effect);
         int currentStacks = current == null ? 0 : current.getAmplifier() + 1;
@@ -130,7 +225,8 @@ public final class AilmentApi {
     /** Applies an explicit, capped Soul Rot amplifier and source-scaled requested duration. */
     public static boolean applySoulRot(LivingEntity target, @Nullable LivingEntity source,
                                        int requestedTicks, int amplifier) {
-        if (!serverValid(target) || !pvpProcReady(target, source, AilmentType.SOUL_ROT)) return false;
+        if (!serverValid(target) || !canSoulRot(target)
+                || !pvpProcReady(target, source, AilmentType.SOUL_ROT)) return false;
         int capped = Math.min(Math.max(0, amplifier),
                 AilmentsConfig.value(AilmentsConfig.SOUL_ROT_MAX_STACKS) - 1);
         return finishApplication(applyDot(target, source, ModEffects.SOUL_ROT.get(), EffectSourceUtil.SOUL_ROT,
@@ -183,7 +279,7 @@ public final class AilmentApi {
      */
     public static boolean applyFracture(LivingEntity target, @Nullable LivingEntity source,
                                         int requestedTicks, int amplifier) {
-        if (!serverValid(target) || requestedTicks < 1 || amplifier < 0
+        if (!serverValid(target) || !canFracture(target) || requestedTicks < 1 || amplifier < 0
                 || !pvpProcReady(target, source, AilmentType.FRACTURE)) return false;
         MobEffect effect = ModEffects.FRACTURE.get();
         MobEffectInstance current = target.getEffect(effect);
@@ -246,8 +342,16 @@ public final class AilmentApi {
     }
 
     public static boolean canBleed(LivingEntity target) {
-        if (target instanceof Player) return true;
-        return target.getMobType() != MobType.UNDEAD && !target.getType().is(ModEntityTypeTags.BLEED_IMMUNE);
+        if (target.getType().is(ModEntityTypeTags.BLEED_IMMUNE)) return false;
+        return target instanceof Player || target.getMobType() != MobType.UNDEAD;
+    }
+    /** Returns false for the Soulless tag and for any entity classified as undead by Minecraft or another mod. */
+    public static boolean canSoulRot(LivingEntity target) {
+        return target.getMobType() != MobType.UNDEAD && !target.getType().is(ModEntityTypeTags.SOULLESS);
+    }
+    /** Returns false for entity types in the Sturdy tag. */
+    public static boolean canFracture(LivingEntity target) {
+        return !target.getType().is(ModEntityTypeTags.STURDY);
     }
     public static boolean isMentalControlResistant(LivingEntity target) {
         return MentalControlUtil.isMentalControlResistant(target);
@@ -319,12 +423,30 @@ public final class AilmentApi {
         }
         return applied;
     }
+    private static boolean applyExternalEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
+                                               int requestedTicks, int amplifier, boolean scaleDurationWithArcane) {
+        Objects.requireNonNull(effect, "effect");
+        if (!externalApplicationValid(target, source, effect, requestedTicks, amplifier)) return false;
+        int duration = scaleDurationWithArcane ? AilmentScaling.scaleDuration(requestedTicks, source) : requestedTicks;
+        boolean applied = addSourcedEffect(target, source, effect, duration, amplifier, false, true, true);
+        if (applied) trackExternalSource(target, source, effect);
+        return applied;
+    }
     private static MobEffectInstance instance(MobEffect effect, int duration, int amplifier, boolean icon) {
         return new MobEffectInstance(effect, duration, amplifier, false, false, icon);
     }
+    private static MobEffectInstance instance(MobEffect effect, int duration, int amplifier, boolean ambient,
+                                              boolean visible, boolean icon) {
+        return new MobEffectInstance(effect, duration, amplifier, ambient, visible, icon);
+    }
     private static boolean addSourcedEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
                                             int duration, int amplifier, boolean icon) {
-        boolean applied = target.addEffect(instance(effect, duration, amplifier, icon), source);
+        return addSourcedEffect(target, source, effect, duration, amplifier, false, false, icon);
+    }
+    private static boolean addSourcedEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
+                                            int duration, int amplifier, boolean ambient, boolean visible,
+                                            boolean icon) {
+        boolean applied = target.addEffect(instance(effect, duration, amplifier, ambient, visible, icon), source);
         if (applied && AscendCompat.isAscendLoaded()) {
             // Ascend observes the standard Forge source and scales duration during addEffect. Ailments already
             // applied its source curve, so restore the requested duration to prevent double scaling.
@@ -335,18 +457,43 @@ public final class AilmentApi {
     }
     private static boolean addStackingEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
                                              int duration, int amplifier, boolean icon) {
+        return addStackingEffect(target, source, effect, duration, amplifier, false, false, icon);
+    }
+    private static boolean addStackingEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
+                                             int duration, int amplifier, boolean ambient, boolean visible,
+                                             boolean icon) {
         MobEffectInstance previous = target.getEffect(effect);
         if (previous == null || previous.getAmplifier() >= amplifier)
-            return addSourcedEffect(target, source, effect, duration, amplifier, icon);
+            return addSourcedEffect(target, source, effect, duration, amplifier, ambient, visible, icon);
 
-        // Vanilla preserves a lower-amplifier effect as a hidden fallback when upgrading. These ailments refresh
-        // to one authoritative stack state, so suppress that fallback without emitting a remove/add lifecycle.
+        // Vanilla preserves a lower-amplifier effect as a hidden fallback when upgrading. Stacking applications use
+        // one authoritative stack state, so suppress that fallback without emitting a remove/add lifecycle.
         int previousDuration = previous.getDuration();
         previous.mapDuration(ignored -> 0);
-        boolean applied = addSourcedEffect(target, source, effect, duration, amplifier, icon);
+        boolean applied = addSourcedEffect(target, source, effect, duration, amplifier, ambient, visible, icon);
         if (!applied && target.getEffect(effect) == previous)
             previous.mapDuration(ignored -> previousDuration);
         return applied;
+    }
+    private static boolean externalApplicationValid(LivingEntity target, @Nullable LivingEntity source,
+                                                    MobEffect effect, int requestedTicks, int amplifier) {
+        if (!serverValid(target) || requestedTicks < 1 || amplifier < 0) return false;
+        if ((effect == ModEffects.BLEED.get() && !canBleed(target))
+                || (effect == ModEffects.SOUL_ROT.get() && !canSoulRot(target))
+                || (effect == ModEffects.FRACTURE.get() && !canFracture(target))) return false;
+        if (source != null && (!source.isAlive() || source.isSpectator()
+                || source.level().isClientSide || source.level() != target.level())) return false;
+        return effect.getCategory() != MobEffectCategory.HARMFUL
+                || !(source instanceof Player sourcePlayer && target instanceof Player targetPlayer)
+                || source == target || sourcePlayer.canHarmPlayer(targetPlayer);
+    }
+    private static void trackExternalSource(LivingEntity target, @Nullable LivingEntity source, MobEffect effect) {
+        String key = externalSourceKey(effect);
+        if (key != null) EffectSourceUtil.setSource(target, key, source);
+    }
+    @Nullable private static String externalSourceKey(MobEffect effect) {
+        var id = ForgeRegistries.MOB_EFFECTS.getKey(effect);
+        return id == null ? null : "ascend_ailments.external." + id;
     }
     private static boolean serverValid(LivingEntity target) {
         return target != null && !target.level().isClientSide && target.isAlive()

@@ -1,5 +1,6 @@
 package net.fretux.ailments.effect;
 
+import net.fretux.ailments.api.AilmentApi;
 import net.fretux.ailments.config.AilmentsConfig;
 import net.fretux.ailments.damage.ModDamageSources;
 import net.fretux.ailments.util.EffectSourceUtil;
@@ -20,6 +21,10 @@ public final class BleedEffect extends MobEffect {
 
     @Override public void applyEffectTick(LivingEntity entity, int amplifier) {
         if (entity.level().isClientSide) return;
+        if (!AilmentApi.canBleed(entity)) {
+            HemorrhageTracker.clearIfPresent(entity);
+            return;
+        }
         double base = amplifier <= 0 ? AilmentsConfig.value(AilmentsConfig.BLEED_DAMAGE_0)
                 : amplifier == 1 ? AilmentsConfig.value(AilmentsConfig.BLEED_DAMAGE_1)
                 : AilmentsConfig.value(AilmentsConfig.BLEED_DAMAGE_2);

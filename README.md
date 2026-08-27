@@ -32,6 +32,29 @@ int appliedCount = AilmentApi.applyEffects(target, source,
 Bleed/Soul Rot stacking and `timed` for an explicit duration and amplifier. `AilmentApi.getEffect(type)` exposes the
 registered `MobEffect` when an integration needs to inspect an active effect without depending on registry internals.
 
+Other mods can use the same source-safe machinery for their own registered effects:
+
+```java
+MobEffect frost = MyEffects.FROST.get();
+
+// Raw duration, vanilla merging, real Forge source, and persistent latest-source tracking.
+AilmentApi.applyEffect(target, source, frost, 100, 0);
+
+// Add one stack per call, cap at 4 stacks, and refresh to 100 ticks.
+AilmentApi.applyStackingEffect(target, source, frost, 100, 4);
+
+// Add one stack, extend remaining duration, and Arcane-scale each added duration chunk once.
+AilmentApi.applyStackingEffect(target, source, frost, 100, 4, true, true);
+
+LivingEntity loadedSource = AilmentApi.getEffectSource(target, frost);
+UUID sourceId = AilmentApi.getEffectSourceUuid(target, frost);
+```
+
+`applyScaledEffect` provides the non-stacking Arcane-scaled variant. Generic applications are server-only, reject
+invalid or cross-dimension sources, and honor team/friendly-fire rules for harmful player-on-player effects. Source
+metadata is keyed by the external effect's registry ID and is cleared lazily when queried after the effect expires;
+`clearEffectSource` can clear it explicitly without removing the effect.
+
 Fracture stacks up to three times. Each stack removes 2 armor and 1 armor toughness; reapplication adds a stack and
 refreshes its duration. Arcane scales that refreshed duration but never changes the fixed attribute penalties.
 
@@ -73,10 +96,15 @@ snapshotted on application so source unloading does not alter an active effect.
 Entity type tags:
 
 - `ascend_ailments:bleed_immune`
+- `ascend_ailments:soulless` (immune to Soul Rot)
+- `ascend_ailments:sturdy` (immune to Fracture)
 - `ascend_ailments:mental_control_resistant`
 - `ascend_ailments:mental_control_immune`
 
-Players remain Bleed-compatible and non-player undead are automatically rejected independently of tags.
+Vanilla undead are included in `soulless`, and any vanilla or modded entity classified with `MobType.UNDEAD` is
+also rejected independently of the tag. `sturdy` includes iron golems by default. Non-player undead remain naturally
+Bleed-immune; `bleed_immune` takes precedence even for players and also prevents and clears Hemorrhage buildup.
+Integrations can query `AilmentApi.canSoulRot`, `canFracture`, and `canBleed` before presenting or applying abilities.
 
 Item tags:
 

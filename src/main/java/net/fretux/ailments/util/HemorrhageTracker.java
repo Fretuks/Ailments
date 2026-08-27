@@ -1,6 +1,7 @@
 package net.fretux.ailments.util;
 
 import net.fretux.ailments.config.AilmentsConfig;
+import net.fretux.ailments.api.AilmentApi;
 import net.fretux.ailments.damage.ModDamageSources;
 import net.fretux.ailments.network.AilmentNetwork;
 import net.minecraft.nbt.CompoundTag;
@@ -16,8 +17,12 @@ public final class HemorrhageTracker {
      * Arcane potency is snapshotted when Bleed is applied, so an unloaded source cannot change an active meter.
      */
     public static boolean recordBleedDamage(LivingEntity target, int amplifier, double arcanePotency) {
-        if (target.level().isClientSide
-                || amplifier + 1 < AilmentsConfig.value(AilmentsConfig.HEMORRHAGE_MINIMUM_STACKS)) return false;
+        if (target.level().isClientSide) return false;
+        if (!AilmentApi.canBleed(target)) {
+            clear(target);
+            return false;
+        }
+        if (amplifier + 1 < AilmentsConfig.value(AilmentsConfig.HEMORRHAGE_MINIMUM_STACKS)) return false;
         double threshold = AilmentsConfig.value(AilmentsConfig.HEMORRHAGE_THRESHOLD);
         double added = AilmentsConfig.value(AilmentsConfig.HEMORRHAGE_FILL_PER_TICK)
                 * Math.max(0.0, arcanePotency);
@@ -41,6 +46,10 @@ public final class HemorrhageTracker {
     }
 
     public static double getProgress(LivingEntity target) {
+        if (!AilmentApi.canBleed(target)) {
+            clearIfPresent(target);
+            return 0.0;
+        }
         CompoundTag data = target.getPersistentData();
         return data.contains(PROGRESS) ? Math.max(0.0, data.getDouble(PROGRESS)) : 0.0;
     }
@@ -53,6 +62,12 @@ public final class HemorrhageTracker {
     public static void clear(LivingEntity target) {
         target.getPersistentData().remove(PROGRESS);
         hideDisplay(target);
+    }
+
+    /** Clears stored buildup and its HUD only when buildup actually exists. */
+    public static void clearIfPresent(LivingEntity target) {
+        if (!target.getPersistentData().contains(PROGRESS)) return;
+        clear(target);
     }
 
     /** Synchronizes the compact client HUD after login or a meter update. */

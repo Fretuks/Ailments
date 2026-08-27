@@ -26,8 +26,8 @@ public final class ControlEffectHelper {
 
     public static void handleLivingTick(LivingEntity entity) {
         if (entity.level().isClientSide) return;
-        handleSoulRotFood(entity);
         cleanDotData(entity);
+        handleSoulRotFood(entity);
         if (entity.hasEffect(ModEffects.FEAR.get())) tickFear(entity);
         else {
             EffectSourceUtil.clear(entity, EffectSourceUtil.FEAR);
@@ -181,9 +181,25 @@ public final class ControlEffectHelper {
     }
 
     private static void cleanDotData(LivingEntity entity) {
-        if (!entity.hasEffect(ModEffects.SOUL_ROT.get())) EffectSourceUtil.clear(entity, EffectSourceUtil.SOUL_ROT);
-        if (!entity.hasEffect(ModEffects.BLEED.get())) EffectSourceUtil.clear(entity, EffectSourceUtil.BLEED);
-        if (!entity.hasEffect(ModEffects.FRACTURE.get())) EffectSourceUtil.clear(entity, EffectSourceUtil.FRACTURE);
+        if (!AilmentApi.canSoulRot(entity)) {
+            if (entity.hasEffect(ModEffects.SOUL_ROT.get())) entity.removeEffect(ModEffects.SOUL_ROT.get());
+            EffectSourceUtil.clear(entity, EffectSourceUtil.SOUL_ROT);
+        } else if (!entity.hasEffect(ModEffects.SOUL_ROT.get())) {
+            EffectSourceUtil.clear(entity, EffectSourceUtil.SOUL_ROT);
+        }
+        if (!AilmentApi.canBleed(entity)) {
+            if (entity.hasEffect(ModEffects.BLEED.get())) entity.removeEffect(ModEffects.BLEED.get());
+            EffectSourceUtil.clear(entity, EffectSourceUtil.BLEED);
+            HemorrhageTracker.clearIfPresent(entity);
+        } else if (!entity.hasEffect(ModEffects.BLEED.get())) {
+            EffectSourceUtil.clear(entity, EffectSourceUtil.BLEED);
+        }
+        if (!AilmentApi.canFracture(entity)) {
+            if (entity.hasEffect(ModEffects.FRACTURE.get())) entity.removeEffect(ModEffects.FRACTURE.get());
+            EffectSourceUtil.clear(entity, EffectSourceUtil.FRACTURE);
+        } else if (!entity.hasEffect(ModEffects.FRACTURE.get())) {
+            EffectSourceUtil.clear(entity, EffectSourceUtil.FRACTURE);
+        }
     }
     private ControlEffectHelper() {}
 }
