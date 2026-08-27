@@ -37,7 +37,7 @@ Other mods can use the same source-safe machinery for their own registered effec
 ```java
 MobEffect frost = MyEffects.FROST.get();
 
-// Raw duration, vanilla merging, real Forge source, and persistent latest-source tracking.
+// Raw duration, authoritative merging, real Forge source, and persistent latest-source tracking.
 AilmentApi.applyEffect(target, source, frost, 100, 0);
 
 // Add one stack per call, cap at 4 stacks, and refresh to 100 ticks.
@@ -50,10 +50,15 @@ LivingEntity loadedSource = AilmentApi.getEffectSource(target, frost);
 UUID sourceId = AilmentApi.getEffectSourceUuid(target, frost);
 ```
 
-`applyScaledEffect` provides the non-stacking Arcane-scaled variant. Generic applications are server-only, reject
-invalid or cross-dimension sources, and honor team/friendly-fire rules for harmful player-on-player effects. Source
+`applyScaledEffect` provides the non-stacking Arcane-scaled variant. Source-aware applications reject infinite or
+higher-amplifier active effects instead of creating vanilla hidden fallbacks, ensuring that the visible effect and its
+single tracked owner cannot diverge. Generic applications are server-only, reject invalid or cross-dimension sources,
+and honor team/friendly-fire rules for harmful player-on-player effects. Source
 metadata is keyed by the external effect's registry ID and is cleared lazily when queried after the effect expires;
 `clearEffectSource` can clear it explicitly without removing the effect.
+
+Ordinary API applications are not rate-limited. Automatic combat integrations that need the configured PvP proc
+cooldown should use `applyProcEffect` with either an `AilmentApplication` descriptor or explicit type/duration values.
 
 Fracture stacks up to three times. Each stack removes 2 armor and 1 armor toughness; reapplication adds a stack and
 refreshes its duration. Arcane scales that refreshed duration but never changes the fixed attribute penalties.
@@ -83,13 +88,15 @@ The single `LivingHurtEvent` pipeline applies modifiers in this order:
 4. Overcharm's pre-hit Charm snapshot and direct-player-melee bonus
 
 Each applicable multiplier is applied once. The Overcharm snapshot happens before Charm is refreshed, so its first
-hit has no pre-existing-Charm bonus.
+hit has no pre-existing-Charm bonus. For simultaneous control effects, active Fear takes precedence over Taunt, and
+Taunt takes precedence over Charm's prohibition against attacking its owner.
 
 ## Optional Ascend integration
 
 `compat.AscendCompat` checks for mod ID `ascend` and reflection-isolates its player-stats capability. Missing classes,
-missing capabilities, non-player sources, and absent/unloaded source data all fall back to 1.0x. DOT potency is
-snapshotted on application so source unloading does not alter an active effect.
+missing capabilities, non-player sources, and absent/unloaded source data all fall back to 1.0x. An incompatible API
+is logged and cached instead of retrying reflection during every application. DOT potency is snapshotted on
+application so source unloading does not alter an active effect.
 
 ## Datapack extension
 

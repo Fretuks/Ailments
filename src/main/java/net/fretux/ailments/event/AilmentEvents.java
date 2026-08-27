@@ -2,6 +2,8 @@ package net.fretux.ailments.event;
 
 import net.fretux.ailments.AscendAilments;
 import net.fretux.ailments.api.AilmentApi;
+import net.fretux.ailments.api.AilmentApplication;
+import net.fretux.ailments.api.AilmentType;
 import net.fretux.ailments.config.AilmentsConfig;
 import net.fretux.ailments.damage.ModDamageSources;
 import net.fretux.ailments.registry.ModEffects;
@@ -69,13 +71,24 @@ public final class AilmentEvents {
         Entity attacker = event.getSource().getEntity();
         if (attacker instanceof LivingEntity living && !(living instanceof Player)
                 && living.hasEffect(ModEffects.CHARM.get())
-                && ControlEffectHelper.isOwnCharmSource(living, event.getEntity())) event.setCanceled(true);
+                && ControlEffectHelper.isOwnCharmSource(living, event.getEntity())) {
+            LivingEntity taunter = living.hasEffect(ModEffects.TAUNT.get())
+                    && !MentalControlUtil.isMentalControlResistant(living)
+                    ? ControlEffectHelper.validTauntSource(living) : null;
+            if (taunter == null || !taunter.getUUID().equals(event.getEntity().getUUID())) event.setCanceled(true);
+        }
     }
 
     @SubscribeEvent
     public static void onChangeTarget(LivingChangeTargetEvent event) {
         if (event.getEntity().level().isClientSide) return;
         if (!(event.getEntity() instanceof Mob mob)) return;
+        LivingEntity fearSource = EffectSourceUtil.getSourceInLevel(mob, EffectSourceUtil.FEAR);
+        if (mob.hasEffect(ModEffects.FEAR.get()) && !MentalControlUtil.isMentalControlResistant(mob)
+                && fearSource != null && fearSource.isAlive()) {
+            event.setNewTarget(null);
+            return;
+        }
         LivingEntity taunter = mob.hasEffect(ModEffects.TAUNT.get())
                 && !MentalControlUtil.isMentalControlResistant(mob)
                 ? ControlEffectHelper.validTauntSource(mob) : null;
@@ -106,9 +119,11 @@ public final class AilmentEvents {
                 && ControlEffectHelper.isOwnCharmSource(victim, attacker))
             amount *= (float) AilmentsConfig.value(AilmentsConfig.CHARM_VICTIM_BONUS);
         if (attacker != null && attacker.hasEffect(ModEffects.CHARM.get())) {
-            amount *= (float) (ControlEffectHelper.isOwnCharmSource(attacker, victim)
-                    ? AilmentsConfig.value(AilmentsConfig.CHARM_SOURCE_PENALTY)
-                    : AilmentsConfig.value(AilmentsConfig.CHARM_OTHER_BONUS));
+            LivingEntity charmSource = AilmentApi.getCharmSource(attacker);
+            if (charmSource != null)
+                amount *= (float) (charmSource.getUUID().equals(victim.getUUID())
+                        ? AilmentsConfig.value(AilmentsConfig.CHARM_SOURCE_PENALTY)
+                        : AilmentsConfig.value(AilmentsConfig.CHARM_OTHER_BONUS));
         }
 
         // 3. Taunt rules; each logically distinct rule is applied once.
@@ -142,8 +157,8 @@ public final class AilmentEvents {
         if (!(causing instanceof LivingEntity attacker) || attacker == victim) return;
 
         if (attacker.hasEffect(ModEffects.OVERCHARM.get()))
-            AilmentApi.applyCharm(victim, attacker,
-                    AilmentsConfig.value(AilmentsConfig.OVERCHARM_CHARM_DURATION));
+            AilmentApi.applyProcEffect(victim, attacker, AilmentType.CHARM,
+                    AilmentsConfig.value(AilmentsConfig.OVERCHARM_CHARM_DURATION), 0);
         if (damageSource.getDirectEntity() == attacker)
             applyTaggedWeaponAilments(attacker.getMainHandItem(), victim, attacker);
     }
@@ -152,16 +167,23 @@ public final class AilmentEvents {
         if (stack.isEmpty()) return;
         if (isAutomaticBleedWeapon(stack) && attacker.getRandom().nextDouble()
                 < AilmentsConfig.value(AilmentsConfig.AUTOMATIC_WEAPON_BLEED_CHANCE))
-            AilmentApi.applyBleed(victim, attacker);
-        if (stack.is(ModItemTags.SOUL_ROT_ON_HIT)) AilmentApi.applySoulRot(victim, attacker);
-        if (stack.is(ModItemTags.FRACTURE_ON_HIT)) AilmentApi.applyFracture(victim, attacker);
+            AilmentApi.applyProcEffect(victim, attacker, AilmentApplication.stack(AilmentType.BLEED));
+        if (stack.is(ModItemTags.SOUL_ROT_ON_HIT))
+            AilmentApi.applyProcEffect(victim, attacker, AilmentApplication.stack(AilmentType.SOUL_ROT));
+        if (stack.is(ModItemTags.FRACTURE_ON_HIT))
+            AilmentApi.applyProcEffect(victim, attacker, AilmentApplication.stack(AilmentType.FRACTURE));
 
         int duration = AilmentsConfig.value(AilmentsConfig.TAGGED_WEAPON_EFFECT_DURATION);
-        if (stack.is(ModItemTags.FEAR_ON_HIT)) AilmentApi.applyFear(victim, attacker, duration);
-        if (stack.is(ModItemTags.CHARM_ON_HIT)) AilmentApi.applyCharm(victim, attacker, duration);
-        if (stack.is(ModItemTags.TAUNT_ON_HIT)) AilmentApi.applyTaunt(victim, attacker, duration, 0);
-        if (stack.is(ModItemTags.OVERCHARM_ON_HIT)) AilmentApi.applyOvercharm(victim, attacker, duration);
-        if (stack.is(ModItemTags.WINDED_ON_HIT)) AilmentApi.applyWinded(victim, attacker, duration);
+        if (stack.is(ModItemTags.FEAR_ON_HIT))
+            AilmentApi.applyProcEffect(victim, attacker, AilmentType.FEAR, duration, 0);
+        if (stack.is(ModItemTags.CHARM_ON_HIT))
+            AilmentApi.applyProcEffect(victim, attacker, AilmentType.CHARM, duration, 0);
+        if (stack.is(ModItemTags.TAUNT_ON_HIT))
+            AilmentApi.applyProcEffect(victim, attacker, AilmentType.TAUNT, duration, 0);
+        if (stack.is(ModItemTags.OVERCHARM_ON_HIT))
+            AilmentApi.applyProcEffect(victim, attacker, AilmentType.OVERCHARM, duration, 0);
+        if (stack.is(ModItemTags.WINDED_ON_HIT))
+            AilmentApi.applyProcEffect(victim, attacker, AilmentType.WINDED, duration, 0);
     }
 
     private static boolean isAutomaticBleedWeapon(ItemStack stack) {

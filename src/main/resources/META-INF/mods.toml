@@ -75,7 +75,7 @@ description='''${mod_description}'''
 [[dependencies.${mod_id}]]
     modId="ascend"
     mandatory=false
-    versionRange="[0,)"
+    versionRange="[3.0.7,4)"
     ordering="AFTER"
     side="BOTH"
 

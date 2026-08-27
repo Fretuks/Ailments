@@ -26,16 +26,41 @@ public final class ControlEffectHelper {
 
     public static void handleLivingTick(LivingEntity entity) {
         if (entity.level().isClientSide) return;
-        cleanDotData(entity);
-        handleSoulRotFood(entity);
+        CompoundTag data = entity.getPersistentData();
+        boolean soulRotRelevant = entity.hasEffect(ModEffects.SOUL_ROT.get())
+                || EffectSourceUtil.hasData(entity, EffectSourceUtil.SOUL_ROT)
+                || data.contains(SOUL_FOOD) || data.contains(SOUL_SATURATION);
+        boolean bleedRelevant = entity.hasEffect(ModEffects.BLEED.get())
+                || EffectSourceUtil.hasData(entity, EffectSourceUtil.BLEED) || HemorrhageTracker.hasProgress(entity);
+        boolean fractureRelevant = entity.hasEffect(ModEffects.FRACTURE.get())
+                || EffectSourceUtil.hasData(entity, EffectSourceUtil.FRACTURE);
+        boolean controlRelevant = entity.hasEffect(ModEffects.FEAR.get()) || entity.hasEffect(ModEffects.TAUNT.get())
+                || entity.hasEffect(ModEffects.CHARM.get()) || entity.hasEffect(ModEffects.OVERCHARM.get())
+                || EffectSourceUtil.hasData(entity, EffectSourceUtil.FEAR)
+                || EffectSourceUtil.hasData(entity, EffectSourceUtil.TAUNT)
+                || EffectSourceUtil.hasData(entity, EffectSourceUtil.CHARM)
+                || EffectSourceUtil.hasData(entity, EffectSourceUtil.OVERCHARM);
+        if (!soulRotRelevant && !bleedRelevant && !fractureRelevant && !controlRelevant) return;
+
+        cleanDotData(entity, soulRotRelevant, bleedRelevant, fractureRelevant);
+        if (soulRotRelevant) handleSoulRotFood(entity);
+        if (MentalControlUtil.isMentalControlImmune(entity)) {
+            removeControlEffect(entity, ModEffects.FEAR.get(), EffectSourceUtil.FEAR);
+            removeControlEffect(entity, ModEffects.TAUNT.get(), EffectSourceUtil.TAUNT);
+            removeControlEffect(entity, ModEffects.CHARM.get(), EffectSourceUtil.CHARM);
+        }
         if (entity.hasEffect(ModEffects.FEAR.get())) tickFear(entity);
         else {
             EffectSourceUtil.clear(entity, EffectSourceUtil.FEAR);
             entity.getPersistentData().remove(FEAR_DISTANCE);
             clearFearPlayerPenalties(entity);
         }
-        if (entity.hasEffect(ModEffects.TAUNT.get())) tickTaunt(entity);
-        else EffectSourceUtil.clear(entity, EffectSourceUtil.TAUNT);
+        boolean fearDominant = entity.hasEffect(ModEffects.FEAR.get())
+                && !MentalControlUtil.isMentalControlResistant(entity)
+                && validControlSource(entity, EffectSourceUtil.FEAR) != null;
+        if (entity.hasEffect(ModEffects.TAUNT.get())) {
+            if (!fearDominant) tickTaunt(entity);
+        } else EffectSourceUtil.clear(entity, EffectSourceUtil.TAUNT);
         if (entity.hasEffect(ModEffects.CHARM.get())) validateCharm(entity);
         else EffectSourceUtil.clear(entity, EffectSourceUtil.CHARM);
         if (!entity.hasEffect(ModEffects.OVERCHARM.get()))
@@ -48,9 +73,14 @@ public final class ControlEffectHelper {
             entity.getPersistentData().remove(FEAR_DISTANCE);
             return;
         }
-        LivingEntity source = validControlSource(entity, EffectSourceUtil.FEAR);
+        LivingEntity loadedSource = EffectSourceUtil.getSourceInLevel(entity, EffectSourceUtil.FEAR);
+        if (loadedSource != null && !loadedSource.isAlive()) {
+            removeControlEffect(entity, ModEffects.FEAR.get(), EffectSourceUtil.FEAR);
+            entity.getPersistentData().remove(FEAR_DISTANCE);
+            return;
+        }
+        LivingEntity source = loadedSource;
         if (source == null) {
-            if (entity instanceof Mob mob) mob.getNavigation().stop();
             entity.getPersistentData().remove(FEAR_DISTANCE);
             clearFearPlayerPenalties(entity);
             return;
@@ -74,8 +104,9 @@ public final class ControlEffectHelper {
         if (horizontal.lengthSqr() < 1.0E-8) horizontal = new Vec3(1, 0, 0);
         Vec3 destination = mob.position().add(horizontal.normalize()
                 .scale(AilmentsConfig.value(AilmentsConfig.FEAR_FLEE_DISTANCE)));
-        mob.getNavigation().moveTo(destination.x, destination.y, destination.z,
-                AilmentsConfig.value(AilmentsConfig.FEAR_FLEE_SPEED));
+        if (mob.tickCount % 10 == 0)
+            mob.getNavigation().moveTo(destination.x, destination.y, destination.z,
+                    AilmentsConfig.value(AilmentsConfig.FEAR_FLEE_SPEED));
     }
 
     private static void restrictFearedPlayer(Player player, LivingEntity source) {
@@ -107,11 +138,13 @@ public final class ControlEffectHelper {
             removeControlEffect(entity, ModEffects.TAUNT.get(), EffectSourceUtil.TAUNT);
             return;
         }
-        LivingEntity source = validControlSource(entity, EffectSourceUtil.TAUNT);
-        if (source == null) {
-            if (entity instanceof Mob mob && mob.getTarget() != null) mob.setTarget(null);
+        LivingEntity loadedSource = EffectSourceUtil.getSourceInLevel(entity, EffectSourceUtil.TAUNT);
+        if (loadedSource != null && !loadedSource.isAlive()) {
+            removeControlEffect(entity, ModEffects.TAUNT.get(), EffectSourceUtil.TAUNT);
             return;
         }
+        LivingEntity source = loadedSource;
+        if (source == null) return;
         if (MentalControlUtil.isMentalControlResistant(entity)) return;
         if (entity instanceof Mob mob && mob.getTarget() != source) mob.setTarget(source);
         else if (entity instanceof Player player)
@@ -121,15 +154,29 @@ public final class ControlEffectHelper {
     private static void validateCharm(LivingEntity entity) {
         if (EffectSourceUtil.getSourceUuid(entity, EffectSourceUtil.CHARM) == null)
             removeControlEffect(entity, ModEffects.CHARM.get(), EffectSourceUtil.CHARM);
+        else {
+            LivingEntity source = EffectSourceUtil.getSourceInLevel(entity, EffectSourceUtil.CHARM);
+            if (source != null && !source.isAlive())
+                removeControlEffect(entity, ModEffects.CHARM.get(), EffectSourceUtil.CHARM);
+        }
     }
 
     public static boolean isOwnCharmSource(LivingEntity charmed, LivingEntity possibleSource) {
-        LivingEntity source = EffectSourceUtil.getSource(charmed, EffectSourceUtil.CHARM);
-        return source != null && source.getUUID().equals(possibleSource.getUUID());
+        UUID sourceId = EffectSourceUtil.getSourceUuid(charmed, EffectSourceUtil.CHARM);
+        return sourceId != null && sourceId.equals(possibleSource.getUUID());
     }
 
     public static LivingEntity validTauntSource(LivingEntity entity) {
         return validControlSource(entity, EffectSourceUtil.TAUNT);
+    }
+
+    /** Clears transient state that is not owned by the vanilla MobEffect instance itself. */
+    public static void clearRuntimeState(LivingEntity entity) {
+        CompoundTag data = entity.getPersistentData();
+        data.remove(FEAR_DISTANCE);
+        data.remove(SOUL_FOOD);
+        data.remove(SOUL_SATURATION);
+        clearFearPlayerPenalties(entity);
     }
 
     private static LivingEntity validControlSource(LivingEntity target, String key) {
@@ -180,24 +227,25 @@ public final class ControlEffectHelper {
         data.putFloat(SOUL_SATURATION, food.getSaturationLevel());
     }
 
-    private static void cleanDotData(LivingEntity entity) {
-        if (!AilmentApi.canSoulRot(entity)) {
+    private static void cleanDotData(LivingEntity entity, boolean soulRotRelevant, boolean bleedRelevant,
+                                     boolean fractureRelevant) {
+        if (soulRotRelevant && !AilmentApi.canSoulRot(entity)) {
             if (entity.hasEffect(ModEffects.SOUL_ROT.get())) entity.removeEffect(ModEffects.SOUL_ROT.get());
             EffectSourceUtil.clear(entity, EffectSourceUtil.SOUL_ROT);
-        } else if (!entity.hasEffect(ModEffects.SOUL_ROT.get())) {
+        } else if (soulRotRelevant && !entity.hasEffect(ModEffects.SOUL_ROT.get())) {
             EffectSourceUtil.clear(entity, EffectSourceUtil.SOUL_ROT);
         }
-        if (!AilmentApi.canBleed(entity)) {
+        if (bleedRelevant && !AilmentApi.canBleed(entity)) {
             if (entity.hasEffect(ModEffects.BLEED.get())) entity.removeEffect(ModEffects.BLEED.get());
             EffectSourceUtil.clear(entity, EffectSourceUtil.BLEED);
             HemorrhageTracker.clearIfPresent(entity);
-        } else if (!entity.hasEffect(ModEffects.BLEED.get())) {
+        } else if (bleedRelevant && !entity.hasEffect(ModEffects.BLEED.get())) {
             EffectSourceUtil.clear(entity, EffectSourceUtil.BLEED);
         }
-        if (!AilmentApi.canFracture(entity)) {
+        if (fractureRelevant && !AilmentApi.canFracture(entity)) {
             if (entity.hasEffect(ModEffects.FRACTURE.get())) entity.removeEffect(ModEffects.FRACTURE.get());
             EffectSourceUtil.clear(entity, EffectSourceUtil.FRACTURE);
-        } else if (!entity.hasEffect(ModEffects.FRACTURE.get())) {
+        } else if (fractureRelevant && !entity.hasEffect(ModEffects.FRACTURE.get())) {
             EffectSourceUtil.clear(entity, EffectSourceUtil.FRACTURE);
         }
     }

@@ -64,6 +64,12 @@ public final class EffectSourceUtil {
         return data.contains(key) ? Math.max(0, data.getFloat(key)) : 1.0F;
     }
 
+    /** Returns whether source or potency metadata exists for an ailment without resolving an entity. */
+    public static boolean hasData(LivingEntity target, String ailment) {
+        CompoundTag data = target.getPersistentData();
+        return data.contains(sourceKey(ailment)) || data.contains(potencyKey(ailment));
+    }
+
     public static void clear(LivingEntity target, String ailment) {
         target.getPersistentData().remove(sourceKey(ailment));
         target.getPersistentData().remove(potencyKey(ailment));

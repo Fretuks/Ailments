@@ -54,6 +54,10 @@ public final class HemorrhageTracker {
         return data.contains(PROGRESS) ? Math.max(0.0, data.getDouble(PROGRESS)) : 0.0;
     }
 
+    public static boolean hasProgress(LivingEntity target) {
+        return target.getPersistentData().contains(PROGRESS);
+    }
+
     public static double getFraction(LivingEntity target) {
         double threshold = AilmentsConfig.value(AilmentsConfig.HEMORRHAGE_THRESHOLD);
         return threshold <= 0 ? 0.0 : Math.min(1.0, getProgress(target) / threshold);

@@ -1,9 +1,9 @@
 package net.fretux.ailments.api;
 
 import net.fretux.ailments.config.AilmentsConfig;
-import net.fretux.ailments.compat.AscendCompat;
 import net.fretux.ailments.registry.ModEffects;
 import net.fretux.ailments.util.EffectSourceUtil;
+import net.fretux.ailments.util.ControlEffectHelper;
 import net.fretux.ailments.util.MentalControlUtil;
 import net.fretux.ailments.util.ModEntityTypeTags;
 import net.fretux.ailments.util.HemorrhageTracker;
@@ -89,8 +89,32 @@ public final class AilmentApi {
     }
 
     /**
+     * Applies an ailment as an automatic combat proc. Unlike ordinary API applications, successful player-versus-
+     * player procs observe the configured per-attacker, per-ailment cooldown.
+     */
+    public static boolean applyProcEffect(LivingEntity target, @Nullable LivingEntity source,
+                                          AilmentApplication application) {
+        Objects.requireNonNull(application, "application");
+        if (!pvpProcReady(target, source, application.type())) return false;
+        boolean applied = applyEffect(target, source, application);
+        recordPvpProc(applied, target, source, application.type());
+        return applied;
+    }
+
+    /** Applies an explicit automatic combat proc with the configured PvP cooldown. */
+    public static boolean applyProcEffect(LivingEntity target, @Nullable LivingEntity source, AilmentType type,
+                                          int requestedTicks, int amplifier) {
+        Objects.requireNonNull(type, "type");
+        if (!pvpProcReady(target, source, type)) return false;
+        boolean applied = applyEffect(target, source, type, requestedTicks, amplifier);
+        recordPvpProc(applied, target, source, type);
+        return applied;
+    }
+
+    /**
      * Applies an effect owned by another mod with standard Forge source propagation and persistent source tracking.
-     * The requested duration is used exactly and is not Arcane-scaled. Vanilla effect-merging rules apply.
+     * The requested duration is used exactly and is not Arcane-scaled. Merging is authoritative: a stronger or
+     * infinite active effect is retained instead of creating an untrackable vanilla hidden fallback.
      */
     public static boolean applyEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
                                       int requestedTicks, int amplifier) {
@@ -202,8 +226,7 @@ public final class AilmentApi {
     /** Applies one Soul Rot stack; disabling extension always refreshes the configured base duration. */
     public static boolean applySoulRot(LivingEntity target, @Nullable LivingEntity source,
                                        boolean extendWithStacks) {
-        if (!serverValid(target) || !canSoulRot(target)
-                || !pvpProcReady(target, source, AilmentType.SOUL_ROT)) return false;
+        if (!harmfulApplicationValid(target, source) || !canSoulRot(target)) return false;
         MobEffect effect = ModEffects.SOUL_ROT.get();
         MobEffectInstance current = target.getEffect(effect);
         int currentStacks = current == null ? 0 : current.getAmplifier() + 1;
@@ -219,23 +242,23 @@ public final class AilmentApi {
             EffectSourceUtil.setPotency(target, EffectSourceUtil.SOUL_ROT,
                     AilmentScaling.getPotencyMultiplier(source, AilmentType.SOUL_ROT));
         }
-        return finishApplication(applied, target, source, AilmentType.SOUL_ROT);
+        return applied;
     }
 
     /** Applies an explicit, capped Soul Rot amplifier and source-scaled requested duration. */
     public static boolean applySoulRot(LivingEntity target, @Nullable LivingEntity source,
                                        int requestedTicks, int amplifier) {
-        if (!serverValid(target) || !canSoulRot(target)
-                || !pvpProcReady(target, source, AilmentType.SOUL_ROT)) return false;
+        if (!harmfulApplicationValid(target, source) || !canSoulRot(target) || requestedTicks < 1 || amplifier < 0)
+            return false;
         int capped = Math.min(Math.max(0, amplifier),
                 AilmentsConfig.value(AilmentsConfig.SOUL_ROT_MAX_STACKS) - 1);
-        return finishApplication(applyDot(target, source, ModEffects.SOUL_ROT.get(), EffectSourceUtil.SOUL_ROT,
-                requestedTicks, capped, AilmentType.SOUL_ROT), target, source, AilmentType.SOUL_ROT);
+        return applyDot(target, source, ModEffects.SOUL_ROT.get(), EffectSourceUtil.SOUL_ROT,
+                requestedTicks, capped, AilmentType.SOUL_ROT);
     }
 
     /** Applies or adds one Bleed stack, returning false for immune targets. */
     public static boolean applyBleed(LivingEntity target, @Nullable LivingEntity source) {
-        if (!serverValid(target) || !canBleed(target) || !pvpProcReady(target, source, AilmentType.BLEED)) return false;
+        if (!harmfulApplicationValid(target, source) || !canBleed(target)) return false;
         MobEffect effect = ModEffects.BLEED.get();
         MobEffectInstance current = target.getEffect(effect);
         int amplifier = current == null ? 0 : Math.min(current.getAmplifier() + 1,
@@ -250,17 +273,18 @@ public final class AilmentApi {
             EffectSourceUtil.setPotency(target, EffectSourceUtil.BLEED,
                     AilmentScaling.getPotencyMultiplier(source, AilmentType.BLEED));
         }
-        return finishApplication(applied, target, source, AilmentType.BLEED);
+        return applied;
     }
 
     /** Applies an explicit, capped Bleed amplifier and source-scaled requested duration. */
     public static boolean applyBleed(LivingEntity target, @Nullable LivingEntity source,
                                      int requestedTicks, int amplifier) {
-        if (!serverValid(target) || !canBleed(target) || !pvpProcReady(target, source, AilmentType.BLEED)) return false;
+        if (!harmfulApplicationValid(target, source) || !canBleed(target) || requestedTicks < 1 || amplifier < 0)
+            return false;
         int capped = Math.min(Math.max(0, amplifier),
                 AilmentsConfig.value(AilmentsConfig.BLEED_MAX_AMPLIFIER));
-        return finishApplication(applyDot(target, source, ModEffects.BLEED.get(), EffectSourceUtil.BLEED,
-                requestedTicks, capped, AilmentType.BLEED), target, source, AilmentType.BLEED);
+        return applyDot(target, source, ModEffects.BLEED.get(), EffectSourceUtil.BLEED,
+                requestedTicks, capped, AilmentType.BLEED);
     }
 
     /** Applies one Fracture stack and refreshes its configured, source-scaled duration. */
@@ -279,8 +303,8 @@ public final class AilmentApi {
      */
     public static boolean applyFracture(LivingEntity target, @Nullable LivingEntity source,
                                         int requestedTicks, int amplifier) {
-        if (!serverValid(target) || !canFracture(target) || requestedTicks < 1 || amplifier < 0
-                || !pvpProcReady(target, source, AilmentType.FRACTURE)) return false;
+        if (!harmfulApplicationValid(target, source) || !canFracture(target) || requestedTicks < 1 || amplifier < 0)
+            return false;
         MobEffect effect = ModEffects.FRACTURE.get();
         MobEffectInstance current = target.getEffect(effect);
         int stackedAmplifier = current == null ? 0 : Math.min(2, current.getAmplifier() + 1);
@@ -288,57 +312,55 @@ public final class AilmentApi {
         int duration = AilmentScaling.scaleDuration(requestedTicks, source);
         boolean applied = addStackingEffect(target, source, effect, duration, appliedAmplifier, true);
         if (applied) EffectSourceUtil.setSource(target, EffectSourceUtil.FRACTURE, source);
-        return finishApplication(applied, target, source, AilmentType.FRACTURE);
+        return applied;
     }
 
     public static boolean applyFear(LivingEntity target, @Nullable LivingEntity source, int requestedTicks) {
-        if (!hostileControlValid(target, source) || MentalControlUtil.isMentalControlImmune(target)
-                || target.getMaxHealth() > AilmentsConfig.value(AilmentsConfig.FEAR_IMMUNITY_HEALTH)
-                || !pvpProcReady(target, source, AilmentType.FEAR)) return false;
+        if (!hostileControlValid(target, source) || requestedTicks < 1
+                || MentalControlUtil.isMentalControlImmune(target)
+                || target.getMaxHealth() > AilmentsConfig.value(AilmentsConfig.FEAR_IMMUNITY_HEALTH)) return false;
         int duration = AilmentScaling.scaleDuration(requestedTicks, source);
         if (target.getMaxHealth() > AilmentsConfig.value(AilmentsConfig.FEAR_REDUCED_HEALTH)) duration /= 2;
         if (MentalControlUtil.isMentalControlResistant(target))
             duration = MentalControlUtil.resistantDuration(duration, 3);
         if (target instanceof EnderMan) duration = Math.max(1, duration / 2);
-        return finishApplication(applySourced(target, source, ModEffects.FEAR.get(), EffectSourceUtil.FEAR,
-                Math.max(1, duration), 0), target, source, AilmentType.FEAR);
+        return applySourced(target, source, ModEffects.FEAR.get(), EffectSourceUtil.FEAR,
+                Math.max(1, duration), 0);
     }
 
     public static boolean applyCharm(LivingEntity target, @Nullable LivingEntity source, int requestedTicks) {
-        if (!hostileControlValid(target, source) || MentalControlUtil.isMentalControlImmune(target)
-                || !pvpProcReady(target, source, AilmentType.CHARM)) return false;
+        if (!hostileControlValid(target, source) || requestedTicks < 1
+                || MentalControlUtil.isMentalControlImmune(target)) return false;
         int duration = AilmentScaling.scaleDuration(requestedTicks, source);
         if (MentalControlUtil.isMentalControlResistant(target))
             duration = MentalControlUtil.resistantDuration(duration, 2);
-        return finishApplication(applySourced(target, source, ModEffects.CHARM.get(), EffectSourceUtil.CHARM,
-                duration, 0), target, source, AilmentType.CHARM);
+        return applySourced(target, source, ModEffects.CHARM.get(), EffectSourceUtil.CHARM, duration, 0);
     }
 
     public static boolean applyTaunt(LivingEntity target, @Nullable LivingEntity source, int requestedTicks, int amplifier) {
-        if (!hostileControlValid(target, source) || MentalControlUtil.isMentalControlImmune(target)
-                || !pvpProcReady(target, source, AilmentType.TAUNT)) return false;
+        if (!hostileControlValid(target, source) || requestedTicks < 1 || amplifier < 0
+                || MentalControlUtil.isMentalControlImmune(target)) return false;
         int duration = AilmentScaling.scaleDuration(requestedTicks, source);
         if (MentalControlUtil.isMentalControlResistant(target))
             duration = MentalControlUtil.resistantDuration(duration, 2);
-        return finishApplication(applySourced(target, source, ModEffects.TAUNT.get(), EffectSourceUtil.TAUNT,
-                duration, Math.max(0, amplifier)), target, source, AilmentType.TAUNT);
+        return applySourced(target, source, ModEffects.TAUNT.get(), EffectSourceUtil.TAUNT,
+                duration, amplifier);
     }
 
     public static boolean applyOvercharm(LivingEntity target, @Nullable LivingEntity source, int requestedTicks) {
-        if (!serverValid(target) || !pvpProcReady(target, source, AilmentType.OVERCHARM)) return false;
+        if (!applicationValid(target, source) || requestedTicks < 1) return false;
         int duration = AilmentScaling.scaleDuration(requestedTicks, source);
         boolean result = addSourcedEffect(target, source, ModEffects.OVERCHARM.get(), duration, 0, true);
         if (result) {
             EffectSourceUtil.setSource(target, EffectSourceUtil.OVERCHARM, source);
         }
-        return finishApplication(result, target, source, AilmentType.OVERCHARM);
+        return result;
     }
 
     public static boolean applyWinded(LivingEntity target, @Nullable LivingEntity source, int requestedTicks) {
-        if (!serverValid(target) || !pvpProcReady(target, source, AilmentType.WINDED)) return false;
+        if (!harmfulApplicationValid(target, source) || requestedTicks < 1) return false;
         int duration = AilmentScaling.scaleDuration(requestedTicks, source);
-        return finishApplication(addSourcedEffect(target, source, ModEffects.WINDED.get(), duration, 0, true),
-                target, source, AilmentType.WINDED);
+        return addSourcedEffect(target, source, ModEffects.WINDED.get(), duration, 0, true);
     }
 
     public static boolean canBleed(LivingEntity target) {
@@ -370,7 +392,9 @@ public final class AilmentApi {
     public static double getHemorrhageFraction(LivingEntity target) {
         return HemorrhageTracker.getFraction(target);
     }
-    public static void clearHemorrhage(LivingEntity target) { HemorrhageTracker.clear(target); }
+    public static void clearHemorrhage(LivingEntity target) {
+        if (target != null && !target.level().isClientSide) HemorrhageTracker.clear(target);
+    }
     @Nullable public static LivingEntity getCharmSource(LivingEntity target) {
         return EffectSourceUtil.getSource(target, EffectSourceUtil.CHARM);
     }
@@ -392,6 +416,7 @@ public final class AilmentApi {
 
     /** Removes all registered ailments and all associated source/potency metadata. */
     public static void clearAll(LivingEntity target) {
+        if (target == null || target.level().isClientSide) return;
         target.removeEffect(ModEffects.SOUL_ROT.get()); target.removeEffect(ModEffects.BLEED.get());
         target.removeEffect(ModEffects.FEAR.get()); target.removeEffect(ModEffects.CHARM.get());
         target.removeEffect(ModEffects.TAUNT.get()); target.removeEffect(ModEffects.OVERCHARM.get());
@@ -404,6 +429,7 @@ public final class AilmentApi {
         EffectSourceUtil.clear(target, EffectSourceUtil.TAUNT);
         EffectSourceUtil.clear(target, EffectSourceUtil.OVERCHARM);
         EffectSourceUtil.clear(target, EffectSourceUtil.FRACTURE);
+        ControlEffectHelper.clearRuntimeState(target);
         HemorrhageTracker.clear(target);
     }
 
@@ -446,13 +472,17 @@ public final class AilmentApi {
     private static boolean addSourcedEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
                                             int duration, int amplifier, boolean ambient, boolean visible,
                                             boolean icon) {
+        MobEffectInstance previous = target.getEffect(effect);
+        if (previous != null && (previous.isInfiniteDuration() || previous.getAmplifier() > amplifier)) return false;
+        if (previous == null || previous.getAmplifier() == amplifier)
+            return target.addEffect(instance(effect, duration, amplifier, ambient, visible, icon), source);
+
+        // Source metadata has one authoritative owner, so never allow vanilla to retain the previous source as a
+        // hidden fallback. A snapshot provides a real rollback even after the live duration has been set to zero.
+        MobEffectInstance snapshot = new MobEffectInstance(previous);
+        previous.mapDuration(ignored -> 0);
         boolean applied = target.addEffect(instance(effect, duration, amplifier, ambient, visible, icon), source);
-        if (applied && AscendCompat.isAscendLoaded()) {
-            // Ascend observes the standard Forge source and scales duration during addEffect. Ailments already
-            // applied its source curve, so restore the requested duration to prevent double scaling.
-            MobEffectInstance active = target.getEffect(effect);
-            if (active != null && active.getAmplifier() == amplifier) active.mapDuration(ignored -> duration);
-        }
+        if (!applied && target.getEffect(effect) == previous) previous.update(snapshot);
         return applied;
     }
     private static boolean addStackingEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
@@ -462,18 +492,7 @@ public final class AilmentApi {
     private static boolean addStackingEffect(LivingEntity target, @Nullable LivingEntity source, MobEffect effect,
                                              int duration, int amplifier, boolean ambient, boolean visible,
                                              boolean icon) {
-        MobEffectInstance previous = target.getEffect(effect);
-        if (previous == null || previous.getAmplifier() >= amplifier)
-            return addSourcedEffect(target, source, effect, duration, amplifier, ambient, visible, icon);
-
-        // Vanilla preserves a lower-amplifier effect as a hidden fallback when upgrading. Stacking applications use
-        // one authoritative stack state, so suppress that fallback without emitting a remove/add lifecycle.
-        int previousDuration = previous.getDuration();
-        previous.mapDuration(ignored -> 0);
-        boolean applied = addSourcedEffect(target, source, effect, duration, amplifier, ambient, visible, icon);
-        if (!applied && target.getEffect(effect) == previous)
-            previous.mapDuration(ignored -> previousDuration);
-        return applied;
+        return addSourcedEffect(target, source, effect, duration, amplifier, ambient, visible, icon);
     }
     private static boolean externalApplicationValid(LivingEntity target, @Nullable LivingEntity source,
                                                     MobEffect effect, int requestedTicks, int amplifier) {
@@ -499,9 +518,18 @@ public final class AilmentApi {
         return target != null && !target.level().isClientSide && target.isAlive()
                 && (!(target instanceof Player player) || !player.isSpectator());
     }
+    private static boolean applicationValid(LivingEntity target, @Nullable LivingEntity source) {
+        if (!serverValid(target)) return false;
+        return source == null || source.isAlive() && !source.isSpectator()
+                && !source.level().isClientSide && source.level() == target.level();
+    }
+    private static boolean harmfulApplicationValid(LivingEntity target, @Nullable LivingEntity source) {
+        if (!applicationValid(target, source)) return false;
+        return !(source instanceof Player sourcePlayer && target instanceof Player targetPlayer)
+                || source == target || sourcePlayer.canHarmPlayer(targetPlayer);
+    }
     private static boolean hostileControlValid(LivingEntity target, @Nullable LivingEntity source) {
-        if (!serverValid(target) || source == null || !source.isAlive()
-                || source.level().isClientSide || source.isSpectator()) return false;
+        if (source == null || !applicationValid(target, source)) return false;
         return !(source instanceof Player sourcePlayer && target instanceof Player targetPlayer)
                 || sourcePlayer.canHarmPlayer(targetPlayer);
     }
@@ -513,22 +541,21 @@ public final class AilmentApi {
         return (int) Math.min(Integer.MAX_VALUE, (long) a + b);
     }
     private static boolean pvpProcReady(LivingEntity target, @Nullable LivingEntity source, AilmentType type) {
-        if (source != null && source.level() != target.level()) return false;
+        if (type == AilmentType.OVERCHARM ? !applicationValid(target, source)
+                : !harmfulApplicationValid(target, source)) return false;
         if (!(source instanceof Player sourcePlayer) || !(target instanceof Player targetPlayer) || source == target)
             return true;
-        if (!sourcePlayer.canHarmPlayer(targetPlayer)) return false;
         String key = pvpCooldownKey(type);
         long now = source.level().getGameTime();
         return !source.getPersistentData().contains(key)
                 || now - source.getPersistentData().getLong(key)
                 >= AilmentsConfig.value(AilmentsConfig.PVP_PROC_COOLDOWN_TICKS);
     }
-    private static boolean finishApplication(boolean applied, LivingEntity target,
-                                             @Nullable LivingEntity source, AilmentType type) {
+    private static void recordPvpProc(boolean applied, LivingEntity target,
+                                      @Nullable LivingEntity source, AilmentType type) {
         if (applied && source instanceof Player && target instanceof Player && source != target) {
             source.getPersistentData().putLong(pvpCooldownKey(type), source.level().getGameTime());
         }
-        return applied;
     }
     private static String pvpCooldownKey(AilmentType type) {
         return "ascend_ailments.pvp_proc." + type.name().toLowerCase(java.util.Locale.ROOT);
