@@ -135,6 +135,13 @@ tracked per attacking player and ailment; their configured minimum is 60 ticks (
 
 ## Admin commands
 
-`/ascendailments apply ...` supports all seven effects and `/ascendailments clear <target>` removes the library's
+`/ascendailments apply ...` supports all eight effects and `/ascendailments clear <target>` removes the library's
 effects and metadata. Permission level 2 is required. Durations are ticks; amplifier arguments use vanilla's
 zero-based convention.
+
+## Creative test items
+
+The Tools & Utilities creative tab contains one glowing debug stick for each of the eight ailments. A successful
+direct hit applies the named effect through the normal source-aware API. Soul Rot, Bleed, and Fracture add their
+configured stacks; the other effects use `taggedWeaponEffectDurationTicks`. The sticks have no recipes and only apply
+effects when wielded by a player in Creative Mode, including on multiplayer and dedicated servers.
